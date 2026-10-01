@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🎬 Spatio-Temporal Video RAG — نظام البحث الذكي في الفيديو</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #0d1117; --card: #161b22;
+      --border: #30363d; --accent: #58a6ff;
+      --green: #3fb950; --yellow: #d29922; --red: #f85149;
+    }
+    body { background: var(--bg); color: #e6edf3;
+           font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; min-height: 100vh; }
+
+    .hero { background: linear-gradient(135deg,#1a1f35,#0d1117);
+            border-bottom: 1px solid var(--border); padding: 2.5rem 0; }
+
+    .app-card { background: var(--card); border: 1px solid var(--border);
+                border-radius: 12px; padding: 1.75rem; margin-bottom: 1.5rem; }
+
+    .result-card { background: var(--card); border: 1px solid var(--border);
+                   border-radius: 10px; padding: 1.5rem; margin-bottom: 1rem;
+                   transition: border-color .2s; }
+    .result-card:hover { border-color: var(--accent); }
+
+    .frame-img { width: 100%; max-height: 200px; object-fit: cover;
+                 border-radius: 8px; border: 1px solid var(--border);
+                 background: #000; margin-bottom: .75rem; }
+    .frame-placeholder { width: 100%; height: 120px; background: #21262d;
+                         border-radius: 8px; border: 1px solid var(--border);
+                         display: flex; align-items: center; justify-content: center;
+                         color: #555; font-size: 2rem; margin-bottom: .75rem; }
+
+    .timestamp-badge { background: #1f2937; border: 1px solid var(--accent);
+                       color: var(--accent); padding: .3rem .8rem;
+                       border-radius: 20px; font-size: .85rem; font-family: monospace; }
+
+    .confidence-bar { height: 8px; border-radius: 4px; background: #21262d; }
+    .confidence-fill { height: 100%; border-radius: 4px;
+                       transition: width .6s ease; }
+
+    .stat-card { background: var(--card); border: 1px solid var(--border);
+                 border-radius: 10px; padding: 1.2rem; text-align: center; }
+    .stat-value { font-size: 1.8rem; font-weight: 700; color: var(--accent); }
+
+    .spinner-border { width: 1.2rem; height: 1.2rem; }
+    .loading { display: none; }
+
+    textarea, input[type="file"], select {
+      background: #21262d !important; border: 1px solid var(--border) !important;
+      color: #e6edf3 !important; border-radius: 8px !important;
+    }
+    textarea:focus, select:focus {
+      border-color: var(--accent) !important; box-shadow: none !important;
+    }
+
+    .btn-action { background: var(--accent); border: none; padding: .65rem 1.8rem;
+                  border-radius: 8px; font-weight: 600; color: #0d1117; }
+    .btn-action:hover { background: #79c0ff; color: #0d1117; }
+    .btn-action:disabled { opacity: .6; cursor: not-allowed; }
+
+    .nav-tabs { border-bottom: 1px solid var(--border); }
+    .nav-tabs .nav-link { color: #8b949e; border: none; border-bottom: 2px solid transparent; }
+    .nav-tabs .nav-link.active { color: var(--accent); background: transparent; border-bottom: 2px solid var(--accent); }
+
+    .status-banner { border-radius: 8px; padding: 1rem; margin-top: 1rem; display: none; }
+  </style>
+</head>
+<body>
+
+<!-- Hero Header -->
+<div class="hero">
+  <div class="container">
+    <div class="d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-3">
+        <span style="font-size:2.5rem">🎬</span>
+        <div>
+          <h1 class="mb-0 fw-bold" style="font-size:1.8rem">Spatio-Temporal Video RAG</h1>
+          <p class="mb-0 text-secondary">نظام الاسترجاع متعدد الوسائط: $V = f(\text{Visual, Audio, Temporal})$</p>
+        </div>
+      </div>
+      <div>
+        <span class="badge rounded-pill px-3 py-2" style="background:#1f2937; border: 1px solid var(--border)">
+          <i class="bi bi-cpu me-1 text-success"></i> Multi-modal CLIP + Whisper
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="container py-4">
+
+  <!-- Stats Row -->
+  <div class="row g-3 mb-4" id="statsRow">
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="stat-value" id="statChunks">—</div>
+        <div class="text-secondary small">شرائح مفهرسة (Chunks)</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="stat-value text-success" id="statStatus">—</div>
+        <div class="text-secondary small">حالة النظام (API)</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="stat-value" style="color:#3fb950" id="statSpeed">&lt; 25ms</div>
+        <div class="text-secondary small">متوسط زمن الاسترجاع</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="stat-card">
+        <div class="stat-value" style="color:#d29922">512</div>
+        <div class="text-secondary small">أبعاد الـ Embedding الموحد</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs Navigation -->
+  <ul class="nav nav-tabs mb-4" id="appTabs" role="tablist">
+    <li class="nav-item">
+      <button class="nav-link active fw-bold" id="search-tab" data-bs-toggle="tab" data-bs-target="#search-panel" type="button">
+        <i class="bi bi-search me-1"></i> البحث والاسترجاع
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-bold" id="upload-tab" data-bs-toggle="tab" data-bs-target="#upload-panel" type="button">
+        <i class="bi bi-cloud-arrow-up me-1"></i> رفع وفهرسة فيديو جديد
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="appTabsContent">
+
+    <!-- Tab 1: Search Panel -->
+    <div class="tab-pane fade show active" id="search-panel" role="tabpanel">
+      <div class="app-card">
+        <h5 class="mb-3"><i class="bi bi-search me-2" style="color:var(--accent)"></i>استعلام البحث الدلالي والبصري</h5>
+        <textarea id="queryInput" class="form-control mb-3" rows="3"
+          placeholder="مثال: شاشة واجهة سطر الأوامر لتنفيذ سكربت معين، أو شرح بنية الشبكات العصبية..."></textarea>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label small text-secondary">فلترة حسب الفيديو (اختياري):</label>
+            <select id="filterVideoId" class="form-select">
+              <option value="">🎬 كل الفيديوهات</option>
+            </select>
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <div class="w-100">
+              <label class="form-label small text-secondary">عدد النتائج (Top-K):</label>
+              <select id="topK" class="form-select">
+                <option value="3" selected>3</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+              </select>
+            </div>
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-action w-100" id="btnSearch" onclick="runSearch()">
+              <span class="normal-text"><i class="bi bi-play-fill me-1"></i>بحث</span>
+              <span class="loading">
+                <span class="spinner-border spinner-border-sm me-1"></span> جاري البحث...
+              </span>
+            </button>
+          </div>
+        </div>
+        <small class="text-secondary">اختصار: <kbd style="background:#21262d;color:#e6edf3">Ctrl + Enter</kbd></small>
+      </div>
+
+      <!-- Results Section -->
+      <div id="resultsSection" style="display:none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="mb-0"><i class="bi bi-collection-play me-2" style="color:var(--accent)"></i>اللقطات المسترجعة</h5>
+          <span class="text-secondary small" id="metaInfo"></span>
+        </div>
+        <div id="resultsList"></div>
+      </div>
+
+      <!-- Empty State -->
+      <div id="emptyState" class="text-center py-5 text-secondary">
+        <i class="bi bi-film" style="font-size:3.5rem;opacity:.3"></i>
+        <p class="mt-3">أدخل استعلامك النصي للبحث عن اللحظات الزمنية والبصرية المطابقة في الفيديو</p>
+      </div>
+    </div>
+
+    <!-- Tab 2: Upload Video Panel -->
+    <div class="tab-pane fade" id="upload-panel" role="tabpanel">
+      <div class="app-card">
+        <h5 class="mb-3"><i class="bi bi-cloud-arrow-up me-2" style="color:var(--accent)"></i>استيعاب وفهرسة فيديو جديد (Ingestion Engine)</h5>
+        <p class="text-secondary small mb-4">
+          يقوم النظام آلياً باستقبال الفيديو، تجزئته زمنياً (Temporal Chunking)، استخراج الإطارات البصرية (CLIP ViT-B/32)، وتفريغ الصوت (Whisper ASR)، ثم دمجهما في مساحة متجهية موحدة $V = f(Visual, Audio, Temporal)$.
+        </p>
+
+        <form id="uploadForm" onsubmit="handleUpload(event)">
+          <div class="mb-3">
+            <label class="form-label small text-secondary">اختر ملف الفيديو (.mp4, .mkv, .avi, .mov):</label>
+            <input type="file" id="videoFileInput" class="form-control" accept="video/*" required />
+          </div>
+
+          <div class="row g-3 mb-4">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary">لغة الصوت للتفريغ (Whisper Language):</label>
+              <select id="videoLang" class="form-select">
+                <option value="ar" selected>العربية (Arabic - ar)</option>
+                <option value="en">الإنجليزية (English - en)</option>
+              </select>
+            </div>
+            <div class="col-md-6 d-flex align-items-end">
+              <button type="submit" class="btn btn-action w-100" id="btnUpload">
+                <span class="upload-normal"><i class="bi bi-gear-fill me-1"></i>بدء الرفع والفهرسة</span>
+                <span class="upload-loading" style="display:none;">
+                  <span class="spinner-border spinner-border-sm me-1"></span> جاري الرفع والمعالجة...
+                </span>
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <!-- Status Banner -->
+        <div id="uploadStatusBanner" class="status-banner" style="background:#1f2937; border: 1px solid var(--border)">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <span class="fw-bold" id="statusVideoTitle">فيديو قيد المعالجة</span>
+            <span class="badge" id="statusBadge" style="background:var(--yellow); color:#000">قيد المعالجة</span>
+          </div>
+          <div class="small text-secondary mb-2" id="statusMessage">جاري التحضير...</div>
+          <div class="progress" style="height: 6px; background:#21262d;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="statusProgress" style="width: 25%; background:var(--accent);"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- Bootstrap Bundle JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+// Load stats on page load
+async function loadStats() {
+  try {
+    const r = await fetch('/');
+    const d = await r.json();
+    document.getElementById('statChunks').textContent = d.chunks_indexed;
+    document.getElementById('statStatus').textContent = '✓ ' + (d.status || 'Online');
+  } catch(e) {
+    document.getElementById('statStatus').textContent = 'Offline';
+  }
+  await loadVideoList();
+}
+
+// Load video IDs from /videos and populate the filter dropdown
+async function loadVideoList() {
+  try {
+    const r   = await fetch('/videos');
+    const d   = await r.json();
+    const sel = document.getElementById('filterVideoId');
+    // Keep first "all videos" option, clear the rest
+    sel.innerHTML = '<option value="">🎬 كل الفيديوهات</option>';
+    (d.videos || []).forEach(vid => {
+      const opt = document.createElement('option');
+      opt.value       = vid;
+      opt.textContent = '🎞️ ' + vid;
+      sel.appendChild(opt);
+    });
+  } catch(e) { /* silently ignore */ }
+}
+
+// Get confidence color
+function confColor(score) {
+  if (score >= 0.7) return '#3fb950';
+  if (score >= 0.5) return '#d29922';
+  return '#f85149';
+}
+
+// Format seconds to MM:SS
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60).toString().padStart(2,'0');
+  const s = Math.floor(sec % 60).toString().padStart(2,'0');
+  return `${m}:${s}`;
+}
+
+// Run search
+async function runSearch() {
+  const query = document.getElementById('queryInput').value.trim();
+  if (!query) return;
+
+  const btn = document.getElementById('btnSearch');
+  btn.querySelector('.normal-text').style.display = 'none';
+  btn.querySelector('.loading').style.display = 'inline';
+  btn.disabled = true;
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('resultsSection').style.display = 'none';
+
+  const videoId = document.getElementById('filterVideoId').value.trim() || null;
+
+  try {
+    const res = await fetch('/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query:    query,
+        top_k:    parseInt(document.getElementById('topK').value),
+        video_id: videoId,
+      })
+    });
+    const data = await res.json();
+    renderResults(data, query);
+  } catch(e) {
+    alert('خطأ في الاتصال بالـ Search API');
+  } finally {
+    btn.querySelector('.normal-text').style.display = 'inline';
+    btn.querySelector('.loading').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+// Render search results
+function renderResults(data, query) {
+  document.getElementById('metaInfo').textContent =
+    `${data.results.length} نتائج • ${data.query_time_ms} ms • ${data.total_chunks_searched} شريحة مفحوصة`;
+
+  const list = document.getElementById('resultsList');
+  list.innerHTML = '';
+
+  if (!data.results || data.results.length === 0) {
+    list.innerHTML = `<div class="p-4 text-center text-secondary">لم يتم العثور على مقاطع مطابقة للاستعلام.</div>`;
+    document.getElementById('resultsSection').style.display = 'block';
+    return;
+  }
+
+  data.results.forEach((r, i) => {
+    const pct   = Math.round(r.confidence_score * 100);
+    const color = confColor(r.confidence_score);
+    const label = pct >= 70 ? 'تطابق عالٍ' : pct >= 50 ? 'تطابق متوسط' : 'تطابق منخفض';
+
+    const frameHtml = r.frame_url
+      ? `<img src="${r.frame_url}" class="frame-img" alt="Keyframe at ${r.start_timestamp}s"
+              onerror="this.parentElement.innerHTML='<div class=frame-placeholder>🎞️</div>'">`
+      : `<div class="frame-placeholder">🎞️</div>`;
+
+    list.innerHTML += `
+      <div class="result-card">
+        <div class="row g-3">
+          <!-- Left: Keyframe Image -->
+          <div class="col-md-4">
+            ${frameHtml}
+            <div class="text-center">
+              <span class="timestamp-badge">
+                <i class="bi bi-clock me-1"></i>
+                ${fmtTime(r.start_timestamp)} → ${fmtTime(r.end_timestamp)}
+              </span>
+            </div>
+          </div>
+
+          <!-- Right: Details -->
+          <div class="col-md-8">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="badge rounded-pill" style="background:#21262d;color:var(--accent)">#${i+1}</span>
+              <span class="small fw-bold" style="color:${color}">${label}</span>
+            </div>
+
+            <div class="mb-3">
+              <div class="d-flex justify-content-between small text-secondary mb-1">
+                <span>Confidence Score (درجة الموثوقية الرياضية)</span>
+                <span style="color:${color};font-weight:700">${r.confidence_score.toFixed(4)} (${pct}%)</span>
+              </div>
+              <div class="confidence-bar">
+                <div class="confidence-fill" style="width:${pct}%;background:${color}"></div>
+              </div>
+            </div>
+
+            <div class="p-2 rounded mb-2" style="background:#21262d;border:1px solid var(--border)">
+              <small class="text-secondary"><i class="bi bi-mic me-1"></i>التفريغ الصوتي (Transcript):</small>
+              <p class="mb-0 mt-1 small" style="color:#cdd9e5;line-height:1.7">
+                ${r.transcript_snippet || '<em class="text-secondary">لا يوجد نص منطوق في هذه الشريحة</em>'}
+              </p>
+            </div>
+
+            <div class="text-secondary" style="font-size:.75rem">
+              <i class="bi bi-film me-1"></i>فيديو: <strong>${r.video_id}</strong>
+              &nbsp;|&nbsp;
+              <i class="bi bi-stopwatch me-1"></i>الطابع الزمني: ${r.start_timestamp}s — ${r.end_timestamp}s
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+
+  document.getElementById('resultsSection').style.display = 'block';
+}
+
+// Handle video upload & background ingestion polling
+async function handleUpload(e) {
+  e.preventDefault();
+  const fileInput = document.getElementById('videoFileInput');
+  if (!fileInput.files || fileInput.files.length === 0) return;
+
+  const file = fileInput.files[0];
+  const lang = document.getElementById('videoLang').value;
+
+  const btn = document.getElementById('btnUpload');
+  btn.querySelector('.upload-normal').style.display = 'none';
+  btn.querySelector('.upload-loading').style.display = 'inline';
+  btn.disabled = true;
+
+  const banner = document.getElementById('uploadStatusBanner');
+  const title = document.getElementById('statusVideoTitle');
+  const badge = document.getElementById('statusBadge');
+  const msg = document.getElementById('statusMessage');
+  const bar = document.getElementById('statusProgress');
+
+  banner.style.display = 'block';
+  title.textContent = file.name;
+  badge.textContent = 'جاري الرفع...';
+  badge.style.background = '#58a6ff';
+  badge.style.color = '#000';
+  msg.textContent = `جاري رفع الملف بحجم ${(file.size / (1024*1024)).toFixed(1)} MB إلى الخادم...`;
+  bar.style.width = '30%';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch(`/upload?language=${lang}`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'فشل في رفع الفيديو');
+    }
+
+    const data = await res.json();
+    const videoId = data.video_id;
+
+    badge.textContent = 'جاري الفهرسة والمعالجة...';
+    badge.style.background = '#d29922';
+    msg.textContent = 'بدأ محرك Ingestion: تقطيع الفيديو، تفريغ الصوت بـ Whisper، واستخراج ميزات CLIP البصرية...';
+    bar.style.width = '60%';
+
+    // Poll status every 2.5s
+    const pollInterval = setInterval(async () => {
+      try {
+        const sRes = await fetch(`/status/${videoId}`);
+        if (!sRes.ok) return;
+        const sData = await sRes.json();
+
+        if (sData.status === 'processing') {
+          msg.textContent = sData.message || 'جاري المعالجة واستخراج التضمينات المتجهة...';
+          bar.style.width = '80%';
+        } else if (sData.status === 'done') {
+          clearInterval(pollInterval);
+          badge.textContent = '✓ تمت الفهرسة بنجاح';
+          badge.style.background = '#3fb950';
+          badge.style.color = '#000';
+          msg.textContent = `اكتملت الفهرسة! تم استخراج وحفظ ${sData.chunks} شريحة في قاعدة البيانات. يمكنك الآن البحث في هذا الفيديو!`;
+          bar.style.width = '100%';
+
+          btn.querySelector('.upload-normal').style.display = 'inline';
+          btn.querySelector('.upload-loading').style.display = 'none';
+          btn.disabled = false;
+          fileInput.value = '';
+
+          loadStats();
+        } else if (sData.status === 'error') {
+          clearInterval(pollInterval);
+          badge.textContent = 'خطأ';
+          badge.style.background = '#f85149';
+          msg.textContent = 'حدث خطأ أثناء المعالجة: ' + sData.message;
+          bar.style.width = '100%';
+
+          btn.querySelector('.upload-normal').style.display = 'inline';
+          btn.querySelector('.upload-loading').style.display = 'none';
+          btn.disabled = false;
+        }
+      } catch(pollErr) {
+        console.error(pollErr);
+      }
+    }, 2500);
+
+  } catch(err) {
+    badge.textContent = 'فشل';
+    badge.style.background = '#f85149';
+    msg.textContent = err.message;
+    btn.querySelector('.upload-normal').style.display = 'inline';
+    btn.querySelector('.upload-loading').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+// Keyboard shortcut
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'Enter') runSearch();
+});
+
+loadStats();
+</script>
+</body>
+</html>
