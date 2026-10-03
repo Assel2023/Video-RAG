@@ -1,6 +1,7 @@
 # api/routes/upload.py — Video Upload & Ingestion Endpoint
 import os
-import shutil
+import hashlib
+import uuid
 from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
 from pydantic import BaseModel
@@ -28,6 +29,7 @@ class UploadResponse(BaseModel):
     size_mb:   float
     message:   str
     status:    str   # "queued" | "processing" | "done" | "error"
+    visual_model: str
 
 
 class StatusResponse(BaseModel):
@@ -37,32 +39,40 @@ class StatusResponse(BaseModel):
     chunks:   int
 
 
-def _run_ingestion(video_path: str, video_id: str, language: str) -> None:
+def _run_ingestion(video_path: str, video_id: str, language: str | None, searcher) -> None:
     """Background task: run ingestion pipeline and update status."""
     from videorag.ingestion.pipeline import ingest_video
     try:
         _ingestion_status[video_id]["status"]  = "processing"
         _ingestion_status[video_id]["message"] = "Extracting chunks and encoding..."
 
-        store = ingest_video(
-            video_path=video_path,
-            video_id=video_id,
-            language=language,
+        # Pin the selected model/store for this job even if global state changes.
+        enc = searcher.encoder if searcher else None
+        trn = getattr(searcher, "transcriber", None) if searcher else None
+
+        store, chunk_count = ingest_video(
+            video_path  = video_path,
+            video_id    = video_id,
+            language    = language,   # None = auto-detect (Bug 8 fix)
+            encoder     = enc,
+            transcriber = trn,
+            store       = searcher.store if searcher else None,
+            source_filename=_ingestion_status[video_id].get("filename"),
         )
 
-        # Refresh the searcher's store reference
-        if _searcher:
-            _searcher.store._col = store._col
-
+        # Bug 3 fix: report actual chunk count, not total vector count
         _ingestion_status[video_id]["status"]  = "done"
-        _ingestion_status[video_id]["message"] = f"Indexed {store.count()} chunks successfully"
-        _ingestion_status[video_id]["chunks"]  = store.count()
-        log.info(f"Ingestion complete for video_id={video_id}")
+        _ingestion_status[video_id]["message"] = (
+            f"Ingestion complete! Indexed {chunk_count} chunks "
+            f"({store.count()} vectors total)."
+        )
+        _ingestion_status[video_id]["chunks"]  = chunk_count
+        log.info(f"Ingestion complete for video_id={video_id} | chunks={chunk_count}")
 
     except Exception as exc:
         log.error(f"Ingestion failed for video_id={video_id}: {exc}")
         _ingestion_status[video_id]["status"]  = "error"
-        _ingestion_status[video_id]["message"] = str(exc)
+        _ingestion_status[video_id]["message"] = f"خطأ: {exc}"
 
 
 @router.post(
@@ -75,56 +85,77 @@ def _run_ingestion(video_path: str, video_id: str, language: str) -> None:
         "ingestion pipeline in the background."
     ),
 )
-async def upload_video(
+def upload_video(
     background_tasks: BackgroundTasks,
     file:     UploadFile = File(..., description="Video file to index"),
-    language: str        = "ar",
+    language: str        = "",   # Bug 8 fix: empty = auto-detect
 ) -> UploadResponse:
     """
     Accept a video file upload and trigger background ingestion.
-
-    The ingestion pipeline runs asynchronously. Poll /status/{video_id}
-    to track progress.
+    Poll /status/{video_id} to track progress.
     """
     # Validate file type
     allowed = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-    suffix  = Path(file.filename).suffix.lower()
+    # Bug 6 fix: use only the basename, never allow path traversal
+    safe_filename = Path(file.filename).name
+    suffix        = Path(safe_filename).suffix.lower()
     if suffix not in allowed:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type '{suffix}'. Allowed: {allowed}",
         )
 
-    # Save uploaded file to data/
-    video_id   = Path(file.filename).stem.replace(" ", "_")
-    save_path  = DATA_DIR / file.filename
+    # Hash content so repeated uploads of the same source video keep one ID.
+    temp_path = DATA_DIR / f"upload_{uuid.uuid4().hex}{suffix}"
+    digest = hashlib.sha256()
+    log.info(f"Receiving upload: {safe_filename}")
+    with open(temp_path, "wb") as f:
+        while block := file.file.read(1024 * 1024):
+            digest.update(block)
+            f.write(block)
 
-    log.info(f"Receiving upload: {file.filename} → {save_path}")
+    video_id = f"video_{digest.hexdigest()[:16]}"
+    save_path = DATA_DIR / f"{video_id}{suffix}"
+    size_mb = os.path.getsize(temp_path) / (1024 ** 2)
 
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # Bug 8 fix: treat empty string as None (auto-detect)
+    lang = language.strip() or None
 
-    size_mb = os.path.getsize(save_path) / (1024 ** 2)
-    log.info(f"Saved {file.filename} ({size_mb:.1f} MB)")
+    # Pin the single active SigLIP 2 searcher before queuing ingestion.
+    from api.routes import search as search_module
+    with search_module._model_lock:
+        pending = _ingestion_status.get(video_id, {}).get("status")
+        if pending in {"queued", "processing"}:
+            temp_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=409,
+                detail="This exact video is already being indexed; wait for it to finish.",
+            )
+        if _searcher is None:
+            temp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=503, detail="Search model is not ready")
+        pinned_searcher = search_module.get_searcher()
+        selected_model = pinned_searcher.encoder.visual_model
+        os.replace(temp_path, save_path)
 
-    # Register status
-    _ingestion_status[video_id] = {
-        "status":  "queued",
-        "message": "Queued for ingestion",
-        "chunks":  0,
-    }
-
-    # Kick off background ingestion
-    background_tasks.add_task(
-        _run_ingestion, str(save_path), video_id, language
-    )
+        _ingestion_status[video_id] = {
+            "status":  "queued",
+            "message": f"Queued for {selected_model} ingestion",
+            "chunks":  0,
+            "visual_model": selected_model,
+            "filename": safe_filename,
+        }
+        background_tasks.add_task(
+            _run_ingestion, str(save_path), video_id, lang, pinned_searcher
+        )
 
     return UploadResponse(
         video_id = video_id,
-        filename = file.filename,
+        filename = safe_filename,
         size_mb  = round(size_mb, 2),
         message  = "Video uploaded. Ingestion started in background.",
         status   = "queued",
+        visual_model = selected_model,
     )
 
 

@@ -28,12 +28,12 @@ def main() -> None:
     args = parser.parse_args()
 
     log.info(f"Starting ingestion: {args.video}")
-    store = ingest_video(
+    store, chunks = ingest_video(
         video_path=args.video,
         video_id=args.id,
         language=args.lang,
     )
-    log.info(f"Done. Total indexed: {store.count()} chunks.")
+    log.info(f"Done. Total indexed: {chunks} chunks ({store.count()} vectors).")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # api/routes/health.py — Health & Status Endpoints
 from fastapi import APIRouter
 from api.models.schemas import HealthResponse
-from videorag.config import EMBED_DIM, VISUAL_ALPHA
+from videorag.config import VISUAL_ALPHA, VISUAL_MODEL
 
 router = APIRouter(tags=["Health"])
 
@@ -20,10 +20,10 @@ def health() -> HealthResponse:
         status         = "online",
         version        = "2.0.0",
         architecture   = "V = f(Visual, Audio, Temporal)",
-        chunks_indexed = _store.count() if _store else 0,
-        embedding_dim  = EMBED_DIM,
+        chunks_indexed = _store.count_chunks() if _store else 0,
+        embedding_dim  = _store.visual_dim if _store else 0,
         modalities     = [
-            f"visual  — CLIP ViT-B/32 ({EMBED_DIM}-dim)",
+            f"visual — {VISUAL_MODEL} ({_store.visual_dim if _store else 0}-dim)",
             "audio   — Whisper ASR + MiniLM (384-dim)",
             "temporal — Sliding window timestamps",
         ],
@@ -36,12 +36,7 @@ def health() -> HealthResponse:
 
 @router.get("/videos", summary="List indexed video IDs")
 def list_videos() -> dict:
-    """Returns a list of all distinct video IDs currently indexed."""
+    """Returns indexed videos ordered by their display filename."""
     if not _store:
         return {"videos": []}
-    try:
-        results = _store._col.get(include=["metadatas"])
-        ids = sorted({m["video_id"] for m in results["metadatas"] if "video_id" in m})
-        return {"videos": ids}
-    except Exception:
-        return {"videos": []}
+    return {"videos": _store.list_videos()}

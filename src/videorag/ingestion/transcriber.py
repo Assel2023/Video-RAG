@@ -70,8 +70,8 @@ class Transcriber:
             subprocess.run([
                 "ffmpeg", "-y", "-i", safe_video,
                 "-ac", "1", "-ar", "16000", "-vn",
-                audio_path, "-loglevel", "quiet"
-            ], check=False)
+                audio_path, "-loglevel", "error"
+            ], check=True, capture_output=True, text=True)
 
             log.info("Running Whisper single-pass on full audio...")
             result = self.model.transcribe(
@@ -88,6 +88,10 @@ class Transcriber:
             log.info(f"Whisper single-pass complete — {len(segments)} segments")
             return segments
 
+        except subprocess.CalledProcessError as e:
+            # Usually means no audio track, or ffmpeg is missing
+            log.warning(f"ffmpeg audio extraction failed (no audio track?): {e.stderr.strip()}")
+            return []
         except Exception as exc:
             log.warning(f"Full transcription failed: {exc}")
             return []

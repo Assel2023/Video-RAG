@@ -23,11 +23,11 @@ def main():
         print(f"\n--- Query: {q} ---")
         
         # Pure visual query
-        clip_vec = searcher.encoder.clip_text.encode(
-            q, convert_to_numpy=True, normalize_embeddings=True
-        ).astype("float32")
+        visual_vec = searcher.encoder.encode_visual_text(q).reshape(-1)
         
-        hits = searcher.store.search(clip_vec.tolist(), top_k=3)
+        hits = searcher.store.search(
+            visual_vec.tolist(), top_k=3, using="visual"
+        )
         for h in hits:
             meta = h["metadata"]
             raw_sim = 1.0 - h["distance"]
