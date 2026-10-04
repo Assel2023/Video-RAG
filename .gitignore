@@ -16,6 +16,7 @@ env/
 # Storage & Data (Do not upload to GitHub!)
 storage/chroma_db/
 storage/qdrant/
+storage/graph/
 storage/keyframes/
 data/*.mp4
 data/*.avi

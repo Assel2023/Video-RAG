@@ -1,12 +1,15 @@
 # api/routes/search.py — Search Endpoints
 import threading
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from api.models.schemas import (
     SearchRequest,
+    GraphRAGRequest,
     SearchResponse,    ChunkResult,
     SearchResponseExtended, ChunkResultExtended,
 )
+from videorag.database.graph_store import create_graph_store
+from videorag.retrieval.graph_rag import GraphRAG
 from videorag.logger import get_logger
 
 log    = get_logger(__name__)
@@ -30,6 +33,90 @@ def set_searcher(searcher) -> None:
 def get_searcher():
     with _model_lock:
         return _searcher
+
+
+def _open_graph_store():
+    try:
+        return create_graph_store()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get(
+    "/graph/entities",
+    summary="[Experiment] List entities extracted into the graph",
+    include_in_schema=True,
+)
+def graph_entities(video_id: str | None = Query(None)) -> dict:
+    graph = _open_graph_store()
+    try:
+        return {"entities": graph.list_fact_entities(video_id=video_id)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        graph.close()
+
+
+@router.get(
+    "/graph/communities",
+    summary="[Experiment] List hierarchical GraphRAG communities",
+    include_in_schema=True,
+)
+def graph_communities(level: int | None = Query(None, ge=0)) -> dict:
+    graph = _open_graph_store()
+    try:
+        return {"communities": graph.community_reports(level=level)}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        graph.close()
+
+
+@router.post(
+    "/search/graph-answer",
+    summary="[Experiment] Evidence-grounded local/global GraphRAG answer",
+    include_in_schema=True,
+)
+def graph_rag_answer(req: GraphRAGRequest) -> dict:
+    with _model_lock:
+        if _searcher is None:
+            raise HTTPException(status_code=503, detail="Search model is not ready")
+        searcher = _searcher
+    graph = _open_graph_store()
+    try:
+        return GraphRAG(graph, searcher).answer(
+            query=req.query,
+            mode=req.mode,
+            top_k=req.top_k,
+            video_id=req.video_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        graph.close()
+
+
+@router.post(
+    "/search/graph-preview",
+    summary="[Experiment] Evidence retrieval from the transcript graph",
+    include_in_schema=True,
+)
+def search_graph_preview(req: SearchRequest) -> dict:
+    """Search graph evidence separately; this does not affect normal retrieval."""
+    graph = _open_graph_store()
+    try:
+        result = graph.search_facts(
+            query=req.query, top_k=req.top_k, video_id=req.video_id
+        )
+        return {
+            **result,
+            "score_type": "graph_evidence_rank_not_confidence",
+            "relation_note": "Experimental relations are kept only when a verbatim transcript quote contains the subject, predicate, and object in Arabic subject-verb-object or verb-subject-object order. A clear reversed subject-verb-object relation, including light Arabic spelling variants, is discarded; manual review is still needed.",
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        graph.close()
 
 
 @router.get("/model", summary="Get the active visual model")

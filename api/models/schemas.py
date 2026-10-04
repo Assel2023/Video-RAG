@@ -1,4 +1,6 @@
 # api/models/schemas.py — Pydantic Request/Response Schemas
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -17,6 +19,15 @@ class SearchRequest(BaseModel):
             }
         }
     }
+
+
+class GraphRAGRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Question grounded in indexed video evidence")
+    mode: Literal["local", "global"] = Field(
+        "local", description="Local entity reasoning or global community reasoning"
+    )
+    video_id: str | None = Field(None, description="Optional video scope")
+    top_k: int = Field(5, ge=1, le=10, description="Number of graph anchors/reports")
 
 
 # ── Standard Search Response (Spec-compliant — 3 fields only) ───────────────

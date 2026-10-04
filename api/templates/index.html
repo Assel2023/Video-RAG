@@ -133,6 +133,11 @@
         <i class="bi bi-cloud-arrow-up me-1"></i> رفع وفهرسة فيديو جديد
       </button>
     </li>
+    <li class="nav-item">
+      <button class="nav-link fw-bold" id="graph-tab" data-bs-toggle="tab" data-bs-target="#graph-panel" type="button">
+        <i class="bi bi-diagram-3 me-1"></i> GraphRAG
+      </button>
+    </li>
   </ul>
 
   <div class="tab-content" id="appTabsContent">
@@ -202,6 +207,52 @@
       <div id="emptyState" class="text-center py-5 text-secondary">
         <i class="bi bi-film" style="font-size:3.5rem;opacity:.3"></i>
         <p class="mt-3">أدخل استعلامك النصي للبحث عن اللحظات الزمنية والبصرية المطابقة في الفيديو</p>
+      </div>
+    </div>
+
+    <!-- Tab 3: GraphRAG -->
+    <div class="tab-pane fade" id="graph-panel" role="tabpanel">
+      <div class="app-card">
+        <h5 class="mb-3"><i class="bi bi-diagram-3 me-2" style="color:var(--accent)"></i>إجابة مدعومة بالرسم البياني ومقاطع الفيديو</h5>
+        <p class="text-secondary small">يبحث محليًا عبر الكيانات والعلاقات، أو عالميًا عبر مجتمعات الفيديوهات، ثم يجيب باستخدام الأدلة مع توقيتاتها.</p>
+        <textarea id="graphQuery" class="form-control mb-3" rows="3" placeholder="مثال: ما العلاقة بين الوعي الذاتي والذكاء الاصطناعي؟"></textarea>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label small text-secondary" for="graphMode">طريقة الاستدلال</label>
+            <select id="graphMode" class="form-select">
+              <option value="local" selected>محلي — كيان وعلاقاته ومقاطعه</option>
+              <option value="global">عالمي — موضوعات ومجتمعات الفيديوهات</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small text-secondary" for="graphVideoId">تحديد الفيديو (اختياري)</label>
+            <select id="graphVideoId" class="form-select">
+              <option value="">🎬 كل الفيديوهات</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-secondary" for="graphTopK">عدد السياقات</label>
+            <select id="graphTopK" class="form-select">
+              <option value="3">3</option><option value="5" selected>5</option><option value="8">8</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-action w-100" id="btnGraphSearch" onclick="runGraphRag()">
+              <span class="normal-text"><i class="bi bi-stars me-1"></i>اسأل GraphRAG</span>
+              <span class="loading"><span class="spinner-border spinner-border-sm me-1"></span>يعالج الأدلة...</span>
+            </button>
+          </div>
+        </div>
+        <div class="small text-secondary mt-3">يتطلب تشغيل خادم llama.cpp. الإجابة تجريبية؛ راجع الاقتباسات والتوقيت قبل اعتمادها.</div>
+      </div>
+      <div id="graphAnswerCard" class="app-card" style="display:none">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+          <h5 class="mb-0">الإجابة</h5><span id="graphAnswerMeta" class="small text-secondary"></span>
+        </div>
+        <div id="graphAnswerText" style="white-space:pre-wrap;line-height:1.9"></div>
+        <hr style="border-color:var(--border)">
+        <h6>الأدلة ومصادرها</h6>
+        <div id="graphCitations"></div>
       </div>
     </div>
 
@@ -296,9 +347,9 @@ async function loadVideoList() {
   try {
     const r   = await fetch('/videos');
     const d   = await r.json();
-    const sel = document.getElementById('filterVideoId');
-    const previous = sel.value;
-    sel.innerHTML = '<option value="">🎬 كل الفيديوهات</option>';
+    const selects = ['filterVideoId', 'graphVideoId'].map(id => document.getElementById(id));
+    const previous = selects.map(sel => sel.value);
+    selects.forEach(sel => { sel.innerHTML = '<option value="">🎬 كل الفيديوهات</option>'; });
     const collator = new Intl.Collator('ar', { numeric: true, sensitivity: 'base' });
     const videos = (d.videos || []).map(item => {
       const vid = typeof item === 'string' ? item : item.video_id;
@@ -310,11 +361,16 @@ async function loadVideoList() {
       const opt = document.createElement('option');
       opt.value       = vid;
       opt.textContent = `🎞️ ${filename} (${vid.slice(-8)})`;
-      sel.appendChild(opt);
+      selects.forEach(sel => {
+        const option = document.createElement('option');
+        option.value = vid;
+        option.textContent = opt.textContent;
+        sel.appendChild(option);
+      });
     });
-    if ([...sel.options].some(option => option.value === previous)) {
-      sel.value = previous;
-    }
+    selects.forEach((sel, index) => {
+      if ([...sel.options].some(option => option.value === previous[index])) sel.value = previous[index];
+    });
   } catch(e) { /* silently ignore */ }
 }
 
@@ -360,6 +416,62 @@ async function runSearch() {
     renderResults(data, query);
   } catch(e) {
     alert('خطأ في الاتصال بالـ Search API');
+  } finally {
+    btn.querySelector('.normal-text').style.display = 'inline';
+    btn.querySelector('.loading').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+}
+
+async function runGraphRag() {
+  const query = document.getElementById('graphQuery').value.trim();
+  if (!query) return;
+  const btn = document.getElementById('btnGraphSearch');
+  btn.querySelector('.normal-text').style.display = 'none';
+  btn.querySelector('.loading').style.display = 'inline';
+  btn.disabled = true;
+  const card = document.getElementById('graphAnswerCard');
+  card.style.display = 'none';
+  try {
+    const response = await fetch('/search/graph-answer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        mode: document.getElementById('graphMode').value,
+        video_id: document.getElementById('graphVideoId').value || null,
+        top_k: parseInt(document.getElementById('graphTopK').value),
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'تعذر إنشاء الإجابة');
+    document.getElementById('graphAnswerText').textContent = data.answer || 'لا توجد إجابة.';
+    const modeName = data.mode === 'global' ? 'عالمي' : 'محلي';
+    const communities = data.community_ids?.length ? ` • مجتمعات: ${data.community_ids.length}` : '';
+    document.getElementById('graphAnswerMeta').textContent = `استدلال ${modeName}${communities}`;
+    const citations = document.getElementById('graphCitations');
+    citations.innerHTML = '';
+    (data.citations || []).forEach(source => {
+      const frame = source.frame_url
+        ? `<img src="${escapeHtml(source.frame_url)}" class="frame-img mb-2" alt="إطار الدليل">` : '';
+      citations.innerHTML += `<div class="result-card mb-2">
+        <div class="d-flex flex-wrap justify-content-between gap-2 small mb-2">
+          <strong>${escapeHtml(source.citation_id)} • ${escapeHtml(source.video_id)}</strong>
+          <span class="timestamp-badge">${fmtTime(source.start_timestamp)} → ${fmtTime(source.end_timestamp)}</span>
+        </div>${frame}
+        <div style="white-space:pre-wrap;line-height:1.8">${escapeHtml(source.evidence)}</div>
+        <div class="small text-secondary mt-2">${escapeHtml(source.chunk_id)}</div>
+      </div>`;
+    });
+    if (!data.citations?.length) citations.innerHTML = '<div class="text-secondary">لم تُرفق استشهادات صالحة؛ لا تعتمد الإجابة.</div>';
+    card.style.display = 'block';
+  } catch (error) {
+    alert(error.message || 'خطأ في الاتصال بخدمة GraphRAG');
   } finally {
     btn.querySelector('.normal-text').style.display = 'inline';
     btn.querySelector('.loading').style.display = 'none';
