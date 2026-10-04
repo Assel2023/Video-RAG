@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from videorag.config import KEYFRAMES_DIR
+from videorag.config import KEYFRAMES_DIR, VISUAL_MODEL
 from videorag.retrieval.searcher import Searcher
 from videorag.logger import get_logger
 from api.routes import health as health_module
@@ -37,6 +37,9 @@ async def lifespan(app: FastAPI):
     log.info(f"Startup complete — {searcher.store.count()} chunks ready")
     yield
     log.info("Shutting down...")
+    active_searcher = search_module.get_searcher()
+    if active_searcher is not None:
+        active_searcher.store.close()
 
 
 app = FastAPI(
@@ -46,10 +49,10 @@ app = FastAPI(
         "**Architecture:** `V = f(Visual, Audio, Temporal)`\n\n"
         "| Component | Model | Dimensions |\n"
         "|-----------|-------|------------|\n"
-        "| Visual Track | Multilingual CLIP ViT-B/32 | 512-dim |\n"
+        f"| Visual Track | {VISUAL_MODEL} | model-dependent |\n"
         "| Audio Track | Whisper Small + MiniLM | 384-dim |\n"
         "| Fusion | α·Visual + (1-α)·Audio | 512-dim |\n"
-        "| Vector DB | ChromaDB (cosine) | — |\n"
+        "| Vector DB | Qdrant (named cosine vectors) | — |\n"
     ),
     version     = "2.0.0",
     lifespan    = lifespan,

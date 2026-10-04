@@ -44,7 +44,7 @@ def _safe_open_video(video_path: str) -> cv2.VideoCapture:
     return cv2.VideoCapture(tmp.name)
 
 
-def extract_chunks(video_path: str) -> list[VideoChunk]:
+def extract_chunks(video_path: str, video_id: str = "video") -> list[VideoChunk]:
     """
     Sliding-window temporal chunking.
 
@@ -84,7 +84,8 @@ def extract_chunks(video_path: str) -> list[VideoChunk]:
     start = 0.0
     index = 0
 
-    while start < duration - CHUNK_SIZE + OVERLAP:
+    # Bug 4 fix: use > 0 so we capture the tail of the video too
+    while start < duration:
         end = min(start + CHUNK_SIZE, duration)
         mid = (start + end) / 2.0
 
@@ -92,8 +93,9 @@ def extract_chunks(video_path: str) -> list[VideoChunk]:
         ret, frame = cap.read()
 
         if ret:
+            # Bug 1 fix: include video_id so frames from different videos never collide
             frame_path = str(
-                KEYFRAMES_DIR / f"frame_{start:.1f}_{end:.1f}.jpg"
+                KEYFRAMES_DIR / f"{video_id}_frame_{start:.1f}_{end:.1f}.jpg"
             )
             cv2.imwrite(frame_path, frame)
             chunks.append(
